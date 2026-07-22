@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, Upload, Keyboard, X, Plus, ScanLine } from "lucide-react";
+import { Camera, Upload, Keyboard, X, Plus, ScanLine, VideoOff } from "lucide-react";
 import ScreenHeader from "@/components/ScreenHeader";
 import AvatarStage from "@/components/AvatarStage";
 import AnalysisProgress from "@/components/AnalysisProgress";
@@ -10,6 +10,7 @@ import Button from "@/components/Button";
 import { analysisProgressSteps, scannedIngredients } from "@/lib/mockData";
 
 type Step = "capture" | "processing" | "confirm" | "analyzing";
+type CameraState = "requesting" | "granted" | "denied";
 
 export default function ScanPage() {
   const router = useRouter();
@@ -18,17 +19,59 @@ export default function ScanPage() {
   const [ingredients, setIngredients] = useState<string[]>([]);
   const [newIngredient, setNewIngredient] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [cameraState, setCameraState] = useState<CameraState>("requesting");
+  const [flash, setFlash] = useState(false);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // request the device camera while the user is on the capture screen
+  useEffect(() => {
+    if (step !== "capture") return;
+    let cancelled = false;
+
+    navigator.mediaDevices
+      ?.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+        setCameraState("granted");
+      })
+      .catch(() => setCameraState("denied"));
+
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, [step]);
+
+  function stopCamera() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }
 
   function startScan() {
+    setFlash(true);
+    setTimeout(() => setFlash(false), 200);
+    stopCamera();
     setSource("scan");
     setStep("processing");
     setTimeout(() => {
+      // Bloom's ingredient reading is a mocked demo response — every scan
+      // resolves to the same illustrative product analysis.
       setIngredients(scannedIngredients);
       setStep("confirm");
     }, 1600);
   }
 
   function startManual() {
+    stopCamera();
     setSource("manual");
     setIngredients([]);
     setStep("confirm");
@@ -158,7 +201,25 @@ export default function ScanPage() {
       </h1>
 
       <div className="relative aspect-square w-full rounded-3xl bg-charcoal overflow-hidden mb-6">
-        <div className="absolute inset-0 bg-gradient-to-br from-lavender-700/40 via-charcoal to-blush-400/20" />
+        {cameraState === "granted" ? (
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-lavender-700/40 via-charcoal to-blush-400/20" />
+        )}
+
+        {/* capture flash */}
+        <div
+          className={`absolute inset-0 bg-white transition-opacity duration-150 pointer-events-none ${
+            flash ? "opacity-80" : "opacity-0"
+          }`}
+        />
+
         <div className="absolute inset-8 rounded-2xl border-2 border-dashed border-white/30">
           <Corner className="top-0 left-0 -translate-x-1/2 -translate-y-1/2 rotate-0" />
           <Corner className="top-0 right-0 translate-x-1/2 -translate-y-1/2 rotate-90" />
@@ -171,6 +232,14 @@ export default function ScanPage() {
         <div className="absolute inset-x-0 bottom-5 flex flex-col items-center gap-2">
           {step === "processing" ? (
             <p className="text-white/90 text-sm">Reading label…</p>
+          ) : cameraState === "denied" ? (
+            <>
+              <VideoOff size={20} className="text-white/70" strokeWidth={1.5} />
+              <p className="text-white/70 text-xs text-center px-8">
+                Camera access is off. You can still upload a photo or take
+                one to continue.
+              </p>
+            </>
           ) : (
             <>
               <ScanLine size={20} className="text-white/70" strokeWidth={1.5} />
@@ -190,11 +259,20 @@ export default function ScanPage() {
         >
           Take Photo
         </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.[0]) startScan();
+          }}
+        />
         <Button
           variant="secondary"
           className="w-full"
           icon={<Upload size={17} strokeWidth={1.8} />}
-          onClick={startScan}
+          onClick={() => fileInputRef.current?.click()}
         >
           Upload Image
         </Button>

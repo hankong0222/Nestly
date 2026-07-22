@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { Check, Mic, MicOff, PhoneOff, Users, MessageSquareText, VideoOff } from "lucide-react";
 import { cn } from "@/lib/cn";
 import AvatarStage from "./AvatarStage";
@@ -37,6 +38,42 @@ export default function LiveCallStatus({
   onJoinCall: () => void;
   onEndCall: () => void;
 }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraState, setCameraState] = useState<"requesting" | "granted" | "denied">(
+    "requesting",
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    navigator.mediaDevices
+      ?.getUserMedia({ video: { facingMode: "user" }, audio: true })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+        setCameraState("granted");
+      })
+      .catch(() => setCameraState("denied"));
+
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  // reflect the Mute control onto the real microphone track
+  useEffect(() => {
+    streamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !muted;
+    });
+  }, [muted]);
+
   return (
     <div className="flex flex-col items-center">
       {/* video call stage */}
@@ -74,9 +111,23 @@ export default function LiveCallStatus({
         </div>
 
         {/* self view PiP */}
-        <div className="absolute bottom-4 right-4 w-16 h-20 rounded-xl bg-white/10 backdrop-blur border border-white/20 flex flex-col items-center justify-center gap-1">
-          <VideoOff size={16} className="text-white/70" strokeWidth={1.75} />
-          <span className="text-[9px] text-white/50">You</span>
+        <div className="absolute bottom-4 right-4 w-16 h-20 rounded-xl overflow-hidden bg-white/10 backdrop-blur border border-white/20 flex flex-col items-center justify-center gap-1">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={cn(
+              "absolute inset-0 w-full h-full object-cover scale-x-[-1]",
+              cameraState !== "granted" && "hidden",
+            )}
+          />
+          {cameraState !== "granted" && (
+            <>
+              <VideoOff size={16} className="text-white/70" strokeWidth={1.75} />
+              <span className="text-[9px] text-white/50">You</span>
+            </>
+          )}
         </div>
       </div>
 
